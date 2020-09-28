@@ -110,6 +110,7 @@ dumpDepInfo() {
         ;;
       *)
         if [ -e "$val" ]; then
+          mkdir -p "$dep_files"
           local dep_file_target=$dep_files/DEP_$(upper $cargo_links)_$(upper $key)
           cp -r "$val" $dep_file_target
           val=$dep_file_target
@@ -120,86 +121,58 @@ dumpDepInfo() {
 }
 
 install_crate() {
-  local host_triple=$1
+  local build_mode="$1"
+  local cargo_links="$2"
   local needs_deps=
   local has_output=
 
-  pushd target/${host_triple}/${buildMode}
-  for output in *; do
-    if [ -d "$output" ]; then
-      continue
-    elif [ -x "$output" ]; then
+  if (( NIX_DEBUG >= 1 )); then
+    cp cargo-output.json $out
+  fi
+
+  # tl;dr: If we are building in test/bench mode, we only care about the test and bench binaries, so
+  # skip all other build artifacts, even though these builds also produce binaries and libs.
+  #
+  # Otherwise, install all the libs + proc macro shared objects and add everything from the build
+  # script output to the meta-files that other derivations check.
+  if [ "$build_mode" = "test" -o "$build_mode" = "bench" ]; then
+    for test_exe in $(jq -r "select(.reason == \"compiler-artifact\" and .target.kind[0] == \"$build_mode\") | .executable" cargo-output.json); do
       mkdir -p $out/bin
-      cp $output $out/bin/
-      has_output=1
-    else
-      case `extractFileExt "$output"` in
-        rlib)
-          mkdir -p $out/lib/.dep-files
-          cp $output $out/lib/
-          local link_flags=$out/lib/.link-flags
-          local dep_keys=$out/lib/.dep-keys
-          touch $link_flags $dep_keys
-          for depinfo in build/*/output; do
-            dumpDepInfo $link_flags $dep_keys "$cargo_links" $out/lib/.dep-files $depinfo
-          done
-          needs_deps=1
-          has_output=1
-          ;;
-        a) ;&
-        so) ;&
-        dylib)
-          mkdir -p $out/lib
-          cp $output $out/lib/
-          has_output=1
-          ;;
-        *)
-          continue
-      esac
+      cp "$test_exe" $out/bin
+    done
+  else
+    for build_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] != "bin" and .target.kind[0] != "proc-macro") | .filenames[]' cargo-output.json); do
+      if [[ "$build_artifact" == *.rmeta ]]; then
+        mkdir -p $out/lib/meta
+        cp "$build_artifact" $out/lib/meta
+      else
+        mkdir -p $out/lib
+        cp "$build_artifact" $out/lib
+      fi
+      needs_deps=1
+    done
+
+    if [ -n "$isProcMacro" ]; then
+      for macro_lib in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "proc-macro") | .filenames[]' cargo-output.json); do
+        mkdir -p $out/lib
+        cp "$macro_lib" $out/lib
+        needs_deps=1
+        # D:
+        isProcMacro="$(basename "$macro_lib")"
+      done
     fi
-  done
-  popd
 
-  if [ "$isProcMacro" ]; then
-    pushd target/${buildMode}
-    for output in *; do
-      if [ -d "$output" ]; then
-        continue
-      fi
-      case `extractFileExt "$output"` in
-        so) ;&
-        dylib)
-          isProcMacro=`basename $output`
-          mkdir -p $out/lib
-          cp $output $out/lib
-          needs_deps=1
-          has_output=1
-          ;;
-        *)
-          continue
-      esac
-    done
-    popd
-  fi
-
-  if [ "$needs_deps" -a "${#dependencies[@]}" -ne 0 ]; then
-    mkdir -p $out/lib/deps
-    linkExternCrateToDeps $out/lib/deps $dependencies
-  fi
-
-  if [ -n "$needDevDependencies" ]; then
-    for file in target/${host_triple}/${buildMode}/deps/*; do
-      if grep -q __RUST_TEST_INVOKE "$file"; then
-        mkdir -p $out/bin
-        cp "$file" $out/bin
-        has_output=1
+    for build_script_output in $(jq -r 'select(.reason == "build-script-executed") | .out_dir' cargo-output.json); do
+      output_file="$(dirname "$build_script_output")/output"
+      if [ -e "$output_file" ]; then
+        dumpDepInfo "$out/lib/.link-flags" "$out/lib/.dep-keys" "$cargo_links" "$out/lib/.dep-files" "$output_file"
       fi
     done
-  fi
 
-  if [ -z "$has_output" ]; then
-      echo >&2 "no output found for crate"
-      exit 1
+    if [ "$needs_deps" -a "${#dependencies[@]}" -ne 0 ]; then
+      mkdir -p $out/lib/deps
+      linkExternCrateToDeps $out/lib/deps $dependencies
+    fi
   fi
   
   echo {} | jq \
