@@ -49,6 +49,23 @@ loadExternCrateLinkFlags() {
     fi
   done
 }
+linkRustdocs() {
+  local target_dir=$1
+  shift
+  local i=
+  for (( i=1; i<$#; i+=2 )); do
+    local extern_name="${@:$i:1}"
+    local crate="${@:((i+1)):1}"
+    [ -f "$crate/.cargo-info" ] || continue
+    # Dependency xyz matches self, meaning it is an older or newer version of this crate.
+    # We have no way to handle this case (cargo doesn't either).
+    # See https://github.com/rust-lang/cargo/issues/6313
+    if [ "$extern_name" = "$crateName" ]; then
+      continue
+    fi
+    ln -sv $crate/share/doc/$extern_name $target_dir/doc
+  done
+}
 loadDepKeys() {
   for (( i=2; i<=$#; i+=2 )); do
     local crate="${@:$i:1}"
@@ -201,6 +218,10 @@ install_crate() {
       echo >&2 "no output found for crate"
       exit 1
   fi
+
+  if [ -n "$doDoc" ]; then
+    install_docs $host_triple doc-target
+  fi
   
   echo {} | jq \
 '{name:$name, metadata:$metadata, version:$version, proc_macro:$procmacro}' \
@@ -208,6 +229,19 @@ install_crate() {
 --arg metadata $NIX_RUST_METADATA \
 --arg procmacro "$isProcMacro" \
 --arg version $version >$out/.cargo-info
+}
+
+install_docs() {
+  local host_triple=$1
+  local target_dir=$2
+  if [ -d $target_dir/$host_triple/doc ]; then
+    mkdir -p $out/share
+    cp -R $target_dir/$host_triple/doc $out/share
+  # documentation for proc macro crates is not placed in a $target directory
+  elif [ -d $target_dir/doc ]; then
+    mkdir -p $out/share
+    cp -R $target_dir/doc $out/share
+  fi
 }
 
 cargoVerbosityLevel() {
