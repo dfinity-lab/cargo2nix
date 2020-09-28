@@ -141,13 +141,13 @@ install_crate() {
       cp "$test_exe" $out/bin
     done
   else
-    for build_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] != "bin" and .target.kind[0] != "proc-macro") | .filenames[]' cargo-output.json); do
+    for build_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] != "bin" and .target.kind[0] != "proc-macro" and .target.kind[0] != "custom-build") | .filenames[]' cargo-output.json); do
       if [[ "$build_artifact" == *.rmeta ]]; then
         mkdir -p $out/lib/meta
         cp "$build_artifact" $out/lib/meta
       else
         mkdir -p $out/lib
-        cp "$build_artifact" $out/lib
+        cp -r "$build_artifact" $out/lib
       fi
       needs_deps=1
     done
@@ -155,10 +155,12 @@ install_crate() {
     if [ -n "$isProcMacro" ]; then
       for macro_lib in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "proc-macro") | .filenames[]' cargo-output.json); do
         mkdir -p $out/lib
-        cp "$macro_lib" $out/lib
+        cp -r "$macro_lib" $out/lib
         needs_deps=1
-        # D:
-        isProcMacro="$(basename "$macro_lib")"
+        if [[ "$macro_lib" != *.dSYM ]]; then
+          # D:
+          isProcMacro="$(basename "$macro_lib")"
+        fi
       done
     fi
 
