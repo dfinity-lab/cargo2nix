@@ -152,6 +152,11 @@ install_crate() {
       needs_deps=1
     done
 
+    for bin_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "bin") | .executable' cargo-output.json); do
+      mkdir -p $out/bin
+      cp -r "$bin_artifact" $out/bin
+    done
+
     if [ -n "$isProcMacro" ]; then
       for macro_lib in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "proc-macro") | .filenames[]' cargo-output.json); do
         mkdir -p $out/lib
