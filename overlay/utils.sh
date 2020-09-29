@@ -130,15 +130,25 @@ install_crate() {
     cp cargo-output.json $out
   fi
 
-  # tl;dr: If we are building in test/bench mode, we only care about the test and bench binaries, so
-  # skip all other build artifacts, even though these builds also produce binaries and libs.
+
+  # tl;dr: If we are building in test/bench mode, only copy the test and bench binaries to $out.
+  # Skip everything else (proc macro outputs, libs, and so on), but keep any bins produced, since
+  # the tests and benchmarks may refer to them.
   #
-  # Otherwise, install all the libs + proc macro shared objects and add everything from the build
-  # script output to the meta-files that other derivations check.
+  # To distinguish between crate-exposed binaries and binaries that are produced by `libtest`, we
+  # put the tests in $out/libexec and the binaries in $out/bin.
+  #
+  # Outside test mode, copy everything to the output
+  for bin_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "bin") | .executable' cargo-output.json); do
+    mkdir -p $out/bin
+    cp -r "$bin_artifact" $out/bin
+  done
+
   if [ "$build_mode" = "test" -o "$build_mode" = "bench" ]; then
     for test_exe in $(jq -r "select(.reason == \"compiler-artifact\" and .target.kind[0] == \"$build_mode\") | .executable" cargo-output.json); do
       mkdir -p $out/bin
       cp "$test_exe" $out/bin
+      echo "$out/bin/$(basename "$test_exe")" >> $out/lib/.test-bins
     done
   else
     for build_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] != "bin" and .target.kind[0] != "proc-macro" and .target.kind[0] != "custom-build") | .filenames[]' cargo-output.json); do
@@ -150,11 +160,6 @@ install_crate() {
         cp -r "$build_artifact" $out/lib
       fi
       needs_deps=1
-    done
-
-    for bin_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "bin") | .executable' cargo-output.json); do
-      mkdir -p $out/bin
-      cp -r "$bin_artifact" $out/bin
     done
 
     if [ -n "$isProcMacro" ]; then
