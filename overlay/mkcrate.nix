@@ -92,7 +92,7 @@ let
 
   drvAttrs = {
     inherit NIX_DEBUG;
-    name = "crate-${name}-${version}${optionalString (compileMode != "build") "-${compileMode}"}";
+    name = "${name}-${version}${optionalString (compileMode != "build") "-${compileMode}"}";
     inherit src version meta needDevDependencies;
     buildMode = if release then "release" else "debug";
     propagatedBuildInputs = lib.unique (concatMap (drv: drv.propagatedBuildInputs) runtimeDependencies);
