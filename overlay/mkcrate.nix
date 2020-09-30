@@ -60,7 +60,8 @@ let
     in
       ''
         cargo build $CARGO_VERBOSE ${optionalString release "--release"} ${buildMode} \
-          ${featuresArg} ${optionalString (!hasDefaultFeature) "--no-default-features"}
+          ${featuresArg} ${optionalString (!hasDefaultFeature) "--no-default-features"} \
+          --message-format=json-render-diagnostics >cargo-output.json
       '';
   needDevDependencies = compileMode == "test" || compileMode == "bench";
   preserveBench = if registry == "unknown"
@@ -230,8 +231,6 @@ let
           echo $key
         done
       fi
-    '' + optionalString stdenv.isDarwin ''
-      export NIX_x86_64_apple_darwin_CFLAGS_COMPILE+=" -fdebug-prefix-map=$NIX_BUILD_TOP=/build"
     '';
 
     buildPhase = ''
@@ -246,12 +245,8 @@ let
       runHook preInstall
       mkdir -p $out/lib
       cargo_links="$(remarshal -if toml -of json Cargo.original.toml | jq -r '.package.links | select(. != null)')"
-      install_crate ${host-triple}
+      install_crate "${compileMode}" "$cargo_links"
       runHook postInstall
-    ''
-    # budget strip phase, since the default strip phase does not seem to be able to target specific file types
-    + optionalString stdenv.isDarwin ''
-      find $out/lib -name '*.dylib' -print0 | xargs -0 strip -S 2>/dev/null || true
     '';
   };
 in
