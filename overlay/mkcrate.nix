@@ -19,6 +19,7 @@
   devDependencies ? { },
   buildDependencies ? { },
   compileMode ? "build",
+  doDoc ? true,
   profile,
   meta ? { },
   rustcflags ? [ ],
@@ -44,25 +45,22 @@ let
     flatten
       (sort (a: b: elemAt a 0 < elemAt b 0)
         (mapAttrsToList (name: value: [ name "${value}" ]) deps));
-  buildCmd =
-    let
-      hasDefaultFeature = elem "default" features;
-      featuresWithoutDefault = if hasDefaultFeature
-        then filter (feature: feature != "default") features
-        else features;
-      buildMode = {
-        "test" = "--tests";
-        "bench" = "--benches";
-      }.${compileMode} or "";
-      featuresArg = if featuresWithoutDefault == [ ]
-        then ""
-        else "--features ${concatStringsSep "," featuresWithoutDefault}";
-    in
-      ''
-        cargo build $CARGO_VERBOSE ${optionalString release "--release"} ${buildMode} \
-          ${featuresArg} ${optionalString (!hasDefaultFeature) "--no-default-features"} \
-          --message-format=json-render-diagnostics >cargo-output.json
-      '';
+  hasDefaultFeature = elem "default" features;
+  featuresWithoutDefault = if hasDefaultFeature
+    then filter (feature: feature != "default") features
+    else features;
+  buildMode = {
+    "test" = "--tests";
+    "bench" = "--benches";
+  }.${compileMode} or "";
+  featuresArg = if featuresWithoutDefault == [ ]
+    then []
+    else [ "--features" (concatStringsSep "," featuresWithoutDefault) ];
+  commonCargoArgs = concatStringsSep " "
+    ([ "$CARGO_VERBOSE" ]
+      ++ optional release "--release"
+      ++ featuresArg
+      ++ optional (!hasDefaultFeature) "--no-default-features");
   needDevDependencies = compileMode == "test" || compileMode == "bench";
   preserveBench = if registry == "unknown"
     then ".bench"
@@ -94,7 +92,8 @@ let
   drvAttrs = {
     inherit NIX_DEBUG;
     name = "${name}-${version}${optionalString (compileMode != "build") "-${compileMode}"}";
-    inherit src version meta needDevDependencies;
+    inherit src version meta;
+    inherit doDoc needDevDependencies;
     buildMode = if release then "release" else "debug";
     propagatedBuildInputs = lib.unique (concatMap (drv: drv.propagatedBuildInputs) runtimeDependencies);
     nativeBuildInputs = [ cargo ] ++ buildtimeDependencies;
@@ -198,7 +197,8 @@ let
           "CC_${host-triple}"="${ccForHost}" \
           "CXX_${host-triple}"="${cxxForHost}" \
           "''${depKeys[@]}" \
-          ${buildCmd}
+          cargo build ${buildMode} ${commonCargoArgs} \
+            --message-format=json-render-diagnostics >cargo-output.json
       )
     '';
 
@@ -239,6 +239,32 @@ let
       runHook setBuildEnv
       runHook runCargo
       runHook postBuild
+    '';
+
+    preInstallPhases = optional doDoc "docPhase";
+
+    docPhase = let
+      docTargetPath = if stdenv.buildPlatform.config == host-triple
+        then "doc-target"
+        else "doc-target/${host-triple}";
+    in ''
+      runHook preDoc
+      mkdir -p ${docTargetPath}/doc
+      linkRustdocs ${docTargetPath} $dependencies $devDependencies
+      (
+        set -euo pipefail
+        if (( NIX_DEBUG >= 1 )); then
+          set -x
+        fi
+        env \
+          "CC_${stdenv.buildPlatform.config}"="${ccForBuild}" \
+          "CXX_${stdenv.buildPlatform.config}"="${cxxForBuild}" \
+          "CC_${host-triple}"="${ccForHost}" \
+          "CXX_${host-triple}"="${cxxForHost}" \
+          "''${depKeys[@]}" \
+          cargo doc ${commonCargoArgs} --target-dir doc-target
+      )
+      runHook postDoc
     '';
 
     installPhase = ''

@@ -49,6 +49,48 @@ loadExternCrateLinkFlags() {
     fi
   done
 }
+linkRustdocs() {
+  local target_dir=$1
+  shift
+  local i=
+  touch search-index-tmp.js
+  for (( i=1; i<$#; i+=2 )); do
+    local extern_name="${@:$i:1}"
+    local crate="${@:((i+1)):1}"
+    [ -f "$crate/.cargo-info" ] || continue
+    # Dependency xyz matches self, meaning it is an older or newer version of this crate.
+    # We have no way to handle this case (cargo doesn't either).
+    # See https://github.com/rust-lang/cargo/issues/6313
+    if [ "$extern_name" = "$crateName" ]; then
+      continue
+    fi
+    # XXX: This is going to break horribly if rustdoc ever changes its output format.
+    # search-index.js is JS, not JSON. rustdoc generates a search-index.js for each
+    # crate it creates docs for, but if such a file exists, it just loads the JSON part of it
+    # (by filtering for lines starting with a double quote) and adds the newest crate index to it.
+    # This is how `cargo doc` in a workspace generates a sidebar containing all the crates
+    # in the entire workspace, even though a single rustdoc invocation can only ever consider
+    # a single crate, and has no information about the contents of the workspace.
+    grep '^"' $crate/share/doc/search-index.js >> search-index-tmp.js
+
+    # For all dependencies we have that might appear in the generated documentation, the directory
+    # containing *those* docs needs to already exist in the directory where the new docs are placed,
+    # otherwise rustdoc will not generate links to the appropriate items.
+    ln -sfv $crate/share/doc/$extern_name $target_dir/doc
+
+    while IFS= read -r -d $'\0' file; do
+      if [ "$(basename "$file")" != "$crateName" ]; then
+        ln -TLsfv "$file" "$target_dir/doc/$(basename "$file")"
+      fi
+    done < <(find $crate/share/doc -maxdepth 1 -type l -print0)
+  done
+  # The crate name is the first string on each line, so we don't need to compare (`-w 40`)
+  # further than that. rustdoc itself does *not* remove duplicate entries from the generated index,
+  # so if it's not done manually here, the resulting index can be up to around 40MB in size
+  # depending on the number of crates in the dependency graph.
+  sort search-index-tmp.js | uniq -w 40 > $target_dir/doc/search-index.js
+  rm search-index-tmp.js
+}
 loadDepKeys() {
   for (( i=2; i<=$#; i+=2 )); do
     local crate="${@:$i:1}"
@@ -186,6 +228,10 @@ install_crate() {
       linkExternCrateToDeps $out/lib/deps $dependencies
     fi
   fi
+
+  if [ -n "$doDoc" ]; then
+    install_docs $CARGO_BUILD_TARGET doc-target
+  fi
   
   echo {} | jq \
 '{name:$name, metadata:$metadata, version:$version, proc_macro:$procmacro}' \
@@ -193,6 +239,19 @@ install_crate() {
 --arg metadata $NIX_RUST_METADATA \
 --arg procmacro "$isProcMacro" \
 --arg version $version >$out/.cargo-info
+}
+
+install_docs() {
+  local host_triple=$1
+  local target_dir=$2
+  if [ -d $target_dir/$host_triple/doc ]; then
+    mkdir -p $out/share
+    cp -R $target_dir/$host_triple/doc $out/share
+  # documentation for proc macro crates is not placed in a $target directory
+  elif [ -d $target_dir/doc ]; then
+    mkdir -p $out/share
+    cp -R $target_dir/doc $out/share
+  fi
 }
 
 cargoVerbosityLevel() {
