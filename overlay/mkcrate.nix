@@ -20,7 +20,7 @@
   buildDependencies ? { },
   compileMode ? "build",
   doInstallCheck ? compileMode != "build",
-  doDoc ? true,
+  doDoc ? false,
   profile,
   meta ? { },
   rustcflags ? [ ],
