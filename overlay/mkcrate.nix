@@ -19,7 +19,8 @@
   devDependencies ? { },
   buildDependencies ? { },
   compileMode ? "build",
-  doDoc ? true,
+  doInstallCheck ? compileMode != "build",
+  doDoc ? false,
   profile,
   meta ? { },
   rustcflags ? [ ],
@@ -272,8 +273,26 @@ let
       mkdir -p $out/lib
       cargo_links="$(remarshal -if toml -of json Cargo.original.toml | jq -r '.package.links | select(. != null)')"
       install_crate "${compileMode}" "$cargo_links"
+      export doInstallCheck=${builtins.toString doInstallCheck}
       runHook postInstall
     '';
+
+    installCheckPhase = if compileMode == "test" || compileMode == "bench"
+      then ''
+        has_doctest=$(cargo metadata --format-version 1 | jq ".packages | any(.targets | any(.doctest))")
+        if [ "$has_doctest" = "true" ]; then
+          RUSTC_BOOTSTRAP=1 cargo test --doc -Zdoctest-xcompile
+        fi
+
+        if [ -e $out/lib/.test-bins ]; then
+          for bin in $(< $out/lib/.test-bins); do
+            echo "$bin --${compileMode}"
+            "$bin" --${compileMode}
+          done
+        fi
+      '' else ''
+        true
+      '';
   };
 in
   stdenv.mkDerivation drvAttrs
