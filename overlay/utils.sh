@@ -172,27 +172,21 @@ install_crate() {
     cp cargo-output.json $out
   fi
 
-
-  # tl;dr: If we are building in test/bench mode, only copy the test and bench binaries to $out.
-  # Skip everything else (proc macro outputs, libs, and so on), but keep any bins produced, since
-  # the tests and benchmarks may refer to them.
-  #
-  # To distinguish between crate-exposed binaries and binaries that are produced by `libtest`, we
-  # put the tests in $out/libexec and the binaries in $out/bin.
-  #
-  # Outside test mode, copy everything to the output
-  for bin_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "bin") | .executable' cargo-output.json); do
+  # Copy all bin artifacts to $out/bin. In test mode, we also copy test and bench binaries there, which are identified by having
+  # "profile":{"test":true} in the cargo output. We add the latter to the file `$out/lib/.test-bins`.
+  for bin_artifact in $(jq -r 'select(.target.kind[0] == "bin" and (.profile.test | not)) | .executable' cargo-output.json); do
     mkdir -p $out/bin
     cp -r "$bin_artifact" $out/bin
   done
 
   if [ "$build_mode" = "test" -o "$build_mode" = "bench" ]; then
-    for test_exe in $(jq -r "select(.reason == \"compiler-artifact\" and .target.kind[0] == \"$build_mode\") | .executable" cargo-output.json); do
+    for test_exe in $(jq -r "select(.profile.test) | .executable" cargo-output.json); do
       mkdir -p $out/bin
       cp "$test_exe" $out/bin
       echo "$out/bin/$(basename "$test_exe")" >> $out/lib/.test-bins
     done
   else
+    # Everything else is a regular rmeta file, rust library, or platform-native object.
     for build_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] != "bin" and .target.kind[0] != "proc-macro" and .target.kind[0] != "custom-build") | .filenames[]' cargo-output.json); do
       if [[ "$build_artifact" == *.rmeta ]]; then
         mkdir -p $out/lib/meta
