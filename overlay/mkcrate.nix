@@ -282,7 +282,8 @@ let
     '';
 
     installCheckPhase = ''
-      RUSTC_BOOTSTRAP=1 cargo ${compileMode} -Zdoctest-xcompile
+      mkdir -p $out
+      RUSTC_BOOTSTRAP=1 cargo ${compileMode} ${optionalString (compileMode == "test" && release) "--release"} -Zdoctest-xcompile
     '';
   };
 in
