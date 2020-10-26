@@ -223,6 +223,8 @@ let
       export NIX_RUST_BUILD_LINK_FLAGS="''${buildLinkFlags[@]} $extraRustcBuildFlags"
       export crateName selfLib NIX_RUSTC_LINKER_HACK NIX_RUSTC_LINKER_HACK_ARGS
 
+      export doInstallCheck=${builtins.toString doInstallCheck}
+
       depKeys=(`loadDepKeys $dependencies`)
 
       if (( NIX_DEBUG >= 1 )); then
@@ -268,31 +270,20 @@ let
       runHook postDoc
     '';
 
+    dontInstall = compileMode != "build";
+    dontFixup = compileMode != "build";
+
     installPhase = ''
       runHook preInstall
       mkdir -p $out/lib
       cargo_links="$(remarshal -if toml -of json Cargo.original.toml | jq -r '.package.links | select(. != null)')"
-      install_crate "${compileMode}" "$cargo_links"
-      export doInstallCheck=${builtins.toString doInstallCheck}
+      install_crate "$cargo_links"
       runHook postInstall
     '';
 
-    installCheckPhase = if compileMode == "test" || compileMode == "bench"
-      then ''
-        has_doctest=$(cargo metadata --format-version 1 | jq ".packages | any(.targets | any(.doctest))")
-        if [ "$has_doctest" = "true" ]; then
-          RUSTC_BOOTSTRAP=1 cargo test --doc -Zdoctest-xcompile
-        fi
-
-        if [ -e $out/lib/.test-bins ]; then
-          for bin in $(< $out/lib/.test-bins); do
-            echo "$bin --${compileMode}"
-            "$bin" --${compileMode}
-          done
-        fi
-      '' else ''
-        true
-      '';
+    installCheckPhase = ''
+      RUSTC_BOOTSTRAP=1 cargo ${compileMode} -Zdoctest-xcompile
+    '';
   };
 in
   stdenv.mkDerivation drvAttrs

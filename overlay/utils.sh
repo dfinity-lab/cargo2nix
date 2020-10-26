@@ -163,8 +163,7 @@ dumpDepInfo() {
 }
 
 install_crate() {
-  local build_mode="$1"
-  local cargo_links="$2"
+  local cargo_links="$1"
   local needs_deps=
   local has_output=
 
@@ -172,61 +171,44 @@ install_crate() {
     cp cargo-output.json $out
   fi
 
-
-  # tl;dr: If we are building in test/bench mode, only copy the test and bench binaries to $out.
-  # Skip everything else (proc macro outputs, libs, and so on), but keep any bins produced, since
-  # the tests and benchmarks may refer to them.
-  #
-  # To distinguish between crate-exposed binaries and binaries that are produced by `libtest`, we
-  # put the tests in $out/libexec and the binaries in $out/bin.
-  #
-  # Outside test mode, copy everything to the output
   for bin_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "bin") | .executable' cargo-output.json); do
     mkdir -p $out/bin
     cp -r "$bin_artifact" $out/bin
   done
 
-  if [ "$build_mode" = "test" -o "$build_mode" = "bench" ]; then
-    for test_exe in $(jq -r "select(.reason == \"compiler-artifact\" and .target.kind[0] == \"$build_mode\") | .executable" cargo-output.json); do
-      mkdir -p $out/bin
-      cp "$test_exe" $out/bin
-      echo "$out/bin/$(basename "$test_exe")" >> $out/lib/.test-bins
-    done
-  else
-    for build_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] != "bin" and .target.kind[0] != "proc-macro" and .target.kind[0] != "custom-build") | .filenames[]' cargo-output.json); do
-      if [[ "$build_artifact" == *.rmeta ]]; then
-        mkdir -p $out/lib/meta
-        cp "$build_artifact" $out/lib/meta
-      else
-        mkdir -p $out/lib
-        cp -r "$build_artifact" $out/lib
-      fi
+  for build_artifact in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] != "bin" and .target.kind[0] != "proc-macro" and .target.kind[0] != "custom-build") | .filenames[]' cargo-output.json); do
+    if [[ "$build_artifact" == *.rmeta ]]; then
+      mkdir -p $out/lib/meta
+      cp "$build_artifact" $out/lib/meta
+    else
+      mkdir -p $out/lib
+      cp -r "$build_artifact" $out/lib
+    fi
+    needs_deps=1
+  done
+
+  if [ -n "$isProcMacro" ]; then
+    for macro_lib in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "proc-macro") | .filenames[]' cargo-output.json); do
+      mkdir -p $out/lib
+      cp -r "$macro_lib" $out/lib
       needs_deps=1
-    done
-
-    if [ -n "$isProcMacro" ]; then
-      for macro_lib in $(jq -r 'select(.reason == "compiler-artifact" and .target.kind[0] == "proc-macro") | .filenames[]' cargo-output.json); do
-        mkdir -p $out/lib
-        cp -r "$macro_lib" $out/lib
-        needs_deps=1
-        if [[ "$macro_lib" != *.dSYM ]]; then
-          # D:
-          isProcMacro="$(basename "$macro_lib")"
-        fi
-      done
-    fi
-
-    for build_script_output in $(jq -r 'select(.reason == "build-script-executed") | .out_dir' cargo-output.json); do
-      output_file="$(dirname "$build_script_output")/output"
-      if [ -e "$output_file" ]; then
-        dumpDepInfo "$out/lib/.link-flags" "$out/lib/.dep-keys" "$cargo_links" "$out/lib/.dep-files" "$output_file"
+      if [[ "$macro_lib" != *.dSYM ]]; then
+        # D:
+        isProcMacro="$(basename "$macro_lib")"
       fi
     done
+  fi
 
-    if [ "$needs_deps" -a "${#dependencies[@]}" -ne 0 ]; then
-      mkdir -p $out/lib/deps
-      linkExternCrateToDeps $out/lib/deps $dependencies
+  for build_script_output in $(jq -r 'select(.reason == "build-script-executed") | .out_dir' cargo-output.json); do
+    output_file="$(dirname "$build_script_output")/output"
+    if [ -e "$output_file" ]; then
+      dumpDepInfo "$out/lib/.link-flags" "$out/lib/.dep-keys" "$cargo_links" "$out/lib/.dep-files" "$output_file"
     fi
+  done
+
+  if [ "$needs_deps" -a "${#dependencies[@]}" -ne 0 ]; then
+    mkdir -p $out/lib/deps
+    linkExternCrateToDeps $out/lib/deps $dependencies
   fi
 
   if [ -n "$doDoc" ]; then
