@@ -31,6 +31,7 @@
 }:
 with builtins; with lib;
 let
+  isolateTestCases = lib.hasPrefix "ic-" name && compileMode == "test";
   inherit (rustLib) realHostTriple decideProfile;
 
   wrapper = exename: rustLib.wrapRustc { inherit rustc exename; };
@@ -281,10 +282,26 @@ let
       runHook postInstall
     '';
 
-    installCheckPhase = ''
-      mkdir -p $out
-      RUSTC_BOOTSTRAP=1 cargo ${compileMode} ${optionalString (compileMode == "test" && release) "--release"} -Zdoctest-xcompile
-    '';
+    installCheckPhase =
+      # if isolateTestCases is true, each test is run independently.
+      # XXX: this _will_ skip doctests.
+      if isolateTestCases then
+        ''
+          while IFS= read -r exe; do
+            echo "found test exe $exe"
+            while IFS= read -r test; do
+              echo "found test name $test"
+              "$exe" --exact "$test"
+            done < <("$exe" --list | grep '.*: test$' | sed 's/: test$//g')
+          done < <(cat cargo-output.json | jq -cMr 'select(.reason == "compiler-artifact" and .target.kind == [ "test" ]) | .executable')
+
+          mkdir -p $out
+        ''
+      else
+        ''
+          mkdir -p $out
+          RUSTC_BOOTSTRAP=1 cargo ${compileMode} ${optionalString (compileMode == "test" && release) "--release"} -Zdoctest-xcompile
+        '';
   };
 in
   stdenv.mkDerivation drvAttrs
