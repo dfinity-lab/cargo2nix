@@ -120,6 +120,8 @@ in rec {
           { name = "${envize pkgs.stdenv.hostPlatform.config}_OPENSSL_DIR"; value = joinOpenssl (patchOpenssl pkgs); }
         ])
       ];
+    } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isMusl {
+      OPENSSL_STATIC = true;
     };
   };
 
