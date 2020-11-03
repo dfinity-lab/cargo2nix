@@ -56,7 +56,6 @@ let
     packageFun = import ./Cargo.nix;
     packageOverrides = pkgs: pkgs.rustBuilder.overrides.all;
     localPatterns = [ ''^(src|tests|templates)(/.*)?'' ''[^/]*\.(rs|toml)$'' ];
-    extraTargets = pkgs.lib.optional pkgs.stdenv.isLinux "x86_64-unknown-linux-musl";
   };
 in
   # `rustPkgs` now contains all crates in the dependency graph.
