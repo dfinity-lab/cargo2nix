@@ -40,7 +40,6 @@ makeExternCrateFlags() {
 loadExternCrateLinkFlags() {
   local i=
   for (( i=1; i<$#; i+=2 )); do
-    local extern_name="${@:$i:1}"
     local crate="${@:((i+1)):1}"
     [ -f "$crate/.cargo-info" ] || continue
     local crate_name=`jq -r '.name' $crate/.cargo-info`
@@ -55,9 +54,10 @@ linkRustdocs() {
   local i=
   touch search-index-tmp.js
   for (( i=1; i<$#; i+=2 )); do
-    local extern_name="${@:$i:1}"
     local crate="${@:((i+1)):1}"
     [ -f "$crate/.cargo-info" ] || continue
+    # Note: The extern_name here may not match the actual package name, which is why we grab it out of the .cargo-info
+    local extern_name="$(jq -r .name $crate/.cargo-info)"
     # Dependency xyz matches self, meaning it is an older or newer version of this crate.
     # We have no way to handle this case (cargo doesn't either).
     # See https://github.com/rust-lang/cargo/issues/6313
@@ -76,19 +76,26 @@ linkRustdocs() {
     # For all dependencies we have that might appear in the generated documentation, the directory
     # containing *those* docs needs to already exist in the directory where the new docs are placed,
     # otherwise rustdoc will not generate links to the appropriate items.
-    ln -sfv $crate/share/doc/$extern_name $target_dir/doc
+    if [ ! -e $crate/share/doc/$extern_name ]; then
+      echo >&1 "extern $crate/share/doc/$extern_name not found"
+      exit 1
+    fi
+    ln -sf $crate/share/doc/$extern_name $target_dir/doc
 
-    while IFS= read -r -d $'\0' file; do
-      if [ "$(basename "$file")" != "$crateName" ]; then
-        ln -TLsfv "$file" "$target_dir/doc/$(basename "$file")"
-      fi
-    done < <(find $crate/share/doc -maxdepth 1 -type l -print0)
+    # also link up the highlighted source code. at some point, we should replace this manual stuff
+    # with buildEnv
+    mkdir -p $target_dir/doc/src
+    ln -sf $crate/share/doc/src/* $target_dir/doc/src
+
+    # link dependencies-of-dependencies. (anything in the share/doc directory that is a symlink
+    # is a symlink to another crate's documentation)
+    find $crate/share/doc -maxdepth 1 -type l -not -name "$crateName" -print0 | \
+      xargs -0 -i ln -Lsf {} "$target_dir/doc"
   done
-  # The crate name is the first string on each line, so we don't need to compare (`-w 40`)
-  # further than that. rustdoc itself does *not* remove duplicate entries from the generated index,
-  # so if it's not done manually here, the resulting index can be up to around 40MB in size
-  # depending on the number of crates in the dependency graph.
-  sort search-index-tmp.js | uniq -w 40 > $target_dir/doc/search-index.js
+  # Sort the concatenated index by crate name. GNU sort has some weirdly elaborate options, see
+  # https://www.gnu.org/software/coreutils/manual/html_node/sort-invocation.html
+  # this sort invocation splits the input on " and does the sort based on the second field, which in this case in the crate name
+  sort -u -t '"' -k 2,2 search-index-tmp.js > $target_dir/doc/search-index.js
   rm search-index-tmp.js
 }
 loadDepKeys() {
