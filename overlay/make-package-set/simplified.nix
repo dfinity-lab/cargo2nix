@@ -1,14 +1,13 @@
-{
-  pkgs,
-  buildPackages,
-  stdenv,
-  rustBuilder,
+{ pkgs
+, buildPackages
+, stdenv
+, rustBuilder
+,
 }:
-args@{
-  rustChannel,
-  packageFun,
-  packageOverrides ? pkgs: pkgs.rustBuilder.overrides.all,
-  ...
+args@{ rustChannel
+, packageFun
+, packageOverrides ? pkgs: pkgs.rustBuilder.overrides.all
+, ...
 }:
 let
   rustChannel = buildPackages.rustChannelOf {
@@ -22,11 +21,15 @@ let
   };
   extraArgs = builtins.removeAttrs args [ "rustChannel" "packageFun" "packageOverrides" ];
 in
-rustBuilder.makePackageSet (extraArgs // {
-  inherit cargo rustc packageFun;
-  packageOverrides = packageOverrides pkgs;
-  buildRustPackages = buildPackages.rustBuilder.makePackageSet (extraArgs // {
+rustBuilder.makePackageSet (
+  extraArgs // {
     inherit cargo rustc packageFun;
-    packageOverrides = packageOverrides buildPackages;
-  });
-})
+    packageOverrides = packageOverrides pkgs;
+    buildRustPackages = buildPackages.rustBuilder.makePackageSet (
+      extraArgs // {
+        inherit cargo rustc packageFun;
+        packageOverrides = packageOverrides buildPackages;
+      }
+    );
+  }
+)

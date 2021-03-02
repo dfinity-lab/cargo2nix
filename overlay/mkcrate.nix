@@ -1,31 +1,36 @@
-{
-  cargo,
-  rustc,
-
-  lib,
-  pkgs,
-  buildPackages,
-  rustLib,
-  stdenv,
+{ cargo
+, rustc
+, lib
+, pkgs
+, buildPackages
+, rustLib
+, stdenv
+,
 }:
-{
-  release, # Compiling in release mode?
-  name,
-  version,
-  registry,
-  src,
-  features ? [ ],
-  dependencies ? { },
-  devDependencies ? { },
-  buildDependencies ? { },
-  compileMode ? "build",
-  profile,
-  meta ? { },
-  rustcflags ? [ ],
-  rustcBuildFlags ? [ ],
-  hostPlatformCpu ? null,
-  hostPlatformFeatures ? [],
-  NIX_DEBUG ? 0,
+{ release
+, # Compiling in release mode?
+  name
+, version
+, registry
+, src
+, features ? []
+, dependencies ? {}
+, devDependencies ? {}
+, buildDependencies ? {}
+, compileMode ? "build"
+, doInstallCheck ? compileMode != "build"
+, doDoc ? compileMode == "build"
+, profile
+, meta ? {}
+, rustcflags ? []
+, rustcBuildFlags ? []
+, hostPlatformCpu ? null
+, hostPlatformFeatures ? []
+, NIX_DEBUG ? 0
+, # flags sent to the test executables, based on the crate name.
+  #  `cargo test ... -- <here come the flags>`
+  extraTestFlags ? (_: [])
+,
 }:
 with builtins; with lib;
 let
@@ -33,67 +38,84 @@ let
 
   wrapper = exename: rustLib.wrapRustc { inherit rustc exename; };
 
-  ccForBuild="${buildPackages.stdenv.cc}/bin/${buildPackages.stdenv.cc.targetPrefix}cc";
-  cxxForBuild="${buildPackages.stdenv.cc}/bin/${buildPackages.stdenv.cc.targetPrefix}c++";
+  ccForBuild = "${buildPackages.stdenv.cc}/bin/${buildPackages.stdenv.cc.targetPrefix}cc";
+  cxxForBuild = "${buildPackages.stdenv.cc}/bin/${buildPackages.stdenv.cc.targetPrefix}c++";
   targetPrefix = stdenv.cc.targetPrefix;
   cc = stdenv.cc;
-  ccForHost="${cc}/bin/${targetPrefix}cc";
-  cxxForHost="${cc}/bin/${targetPrefix}c++";
+  ccForHost = "${cc}/bin/${targetPrefix}cc";
+  cxxForHost = "${cc}/bin/${targetPrefix}c++";
   host-triple = realHostTriple stdenv.hostPlatform;
   depMapToList = deps:
     flatten
-      (sort (a: b: elemAt a 0 < elemAt b 0)
-        (mapAttrsToList (name: value: [ name "${value}" ]) deps));
-  buildCmd =
-    let
-      hasDefaultFeature = elem "default" features;
-      featuresWithoutDefault = if hasDefaultFeature
-        then filter (feature: feature != "default") features
-        else features;
-      buildMode = {
-        "test" = "--tests";
-        "bench" = "--benches";
-      }.${compileMode} or "";
-      featuresArg = if featuresWithoutDefault == [ ]
-        then ""
-        else "--features ${concatStringsSep "," featuresWithoutDefault}";
-    in
-      ''
-        cargo build $CARGO_VERBOSE ${optionalString release "--release"} ${buildMode} \
-          ${featuresArg} ${optionalString (!hasDefaultFeature) "--no-default-features"}
-      '';
+      (
+        sort (a: b: elemAt a 0 < elemAt b 0)
+          (mapAttrsToList (name: value: [ name "${value}" ]) deps)
+      );
+  hasDefaultFeature = elem "default" features;
+  featuresWithoutDefault =
+    if hasDefaultFeature
+    then filter (feature: feature != "default") features
+    else features;
+  buildMode = {
+    "test" = "--tests";
+    "bench" = "--benches";
+  }.${compileMode} or "";
+  featuresArg =
+    if featuresWithoutDefault == []
+    then []
+    else [ "--features" (concatStringsSep "," featuresWithoutDefault) ];
+  commonCargoArgs = concatStringsSep " "
+    (
+      [ "$CARGO_VERBOSE" ]
+      ++ optional release "--release"
+      ++ featuresArg
+      ++ optional (!hasDefaultFeature) "--no-default-features"
+    );
   needDevDependencies = compileMode == "test" || compileMode == "bench";
-  preserveBench = if registry == "unknown"
+  preserveBench =
+    if registry == "unknown"
     then ".bench"
     else "null";
 
   inherit
     (({ right, wrong }: { runtimeDependencies = right; buildtimeDependencies = wrong; })
-      (partition (drv: drv.stdenv.hostPlatform == stdenv.hostPlatform)
-        (concatLists [
-          (attrValues dependencies)
-          (optionals needDevDependencies (attrValues devDependencies))
-          (attrValues buildDependencies)
-        ])))
-    runtimeDependencies buildtimeDependencies;
+      (
+        partition (drv: drv.stdenv.hostPlatform == stdenv.hostPlatform)
+          (
+            concatLists [
+              (attrValues dependencies)
+              (optionals needDevDependencies (attrValues devDependencies))
+              (attrValues buildDependencies)
+            ]
+          )
+      ))
+    runtimeDependencies buildtimeDependencies
+    ;
 
-  dependencyGraph = crate: builtins.listToAttrs (builtins.genericClosure {
-    startSet = makeKvs crate;
-    operator = crate: makeKvs crate.value;
-  });
+  dependencyGraph = crate: builtins.listToAttrs (
+    builtins.genericClosure {
+      startSet = makeKvs crate;
+      operator = crate: makeKvs crate.value;
+    }
+  );
 
-  makeKvs = parent: map (crate: rec {
-    key = "${crate.name}-${crate.version}";
-    name = key;
-    value = crate;
-  }) (builtins.attrValues (parent.dependencies // parent.devDependencies));
+  makeKvs = parent: map
+    (
+      crate: rec {
+        key = "${crate.name}-${crate.version}";
+        name = key;
+        value = crate;
+      }
+    )
+    (builtins.attrValues (parent.dependencies // parent.devDependencies));
 
   maybeSelfLib = (dependencyGraph { inherit dependencies devDependencies; })."${name}-${version}" or null;
 
   drvAttrs = {
     inherit NIX_DEBUG;
-    name = "crate-${name}-${version}${optionalString (compileMode != "build") "-${compileMode}"}";
-    inherit src version meta needDevDependencies;
+    name = "${name}-${version}${optionalString (compileMode != "build") "-${compileMode}"}";
+    inherit src version meta;
+    inherit doDoc needDevDependencies;
     buildMode = if release then "release" else "debug";
     propagatedBuildInputs = lib.unique (concatMap (drv: drv.propagatedBuildInputs) runtimeDependencies);
     nativeBuildInputs = [ cargo ] ++ buildtimeDependencies;
@@ -111,8 +133,10 @@ let
     # RUSTC_LOG = "rustc_codegen_ssa::back::link=info";
 
     depsBuildBuild =
-      let inherit (buildPackages.buildPackages) stdenv jq remarshal;
-      in [ stdenv.cc jq remarshal ];
+      let
+        inherit (buildPackages.buildPackages) stdenv jq remarshal;
+      in
+        [ stdenv.cc jq remarshal ];
 
     stripDebugList = [ "bin" ];
 
@@ -124,22 +148,22 @@ let
         dependencies
         devDependencies
         buildDependencies
-        features;
-      shell = pkgs.mkShell (removeAttrs drvAttrs ["src"]);
+        features
+        ;
+      shell = pkgs.mkShell (removeAttrs drvAttrs [ "src" ]);
     };
 
     dependencies = depMapToList dependencies;
     buildDependencies = depMapToList buildDependencies;
     devDependencies = depMapToList (optionalAttrs needDevDependencies devDependencies);
 
-    selfLib = if !needDevDependencies || maybeSelfLib == null
+    selfLib =
+      if !needDevDependencies || maybeSelfLib == null
       then null
       else "${maybeSelfLib}/lib";
 
     extraRustcFlags =
-      optionals (hostPlatformCpu != null) ([("-Ctarget-cpu=" + hostPlatformCpu)]) ++
-      optionals (hostPlatformFeatures != []) [("-Ctarget-feature=" + (concatMapStringsSep "," (feature: "+" + feature) hostPlatformFeatures))] ++
-      rustcflags;
+      optionals (hostPlatformCpu != null) ([ ("-Ctarget-cpu=" + hostPlatformCpu) ]) ++ optionals (hostPlatformFeatures != []) [ ("-Ctarget-feature=" + (concatMapStringsSep "," (feature: "+" + feature) hostPlatformFeatures)) ] ++ rustcflags;
 
     extraRustcBuildFlags = rustcBuildFlags;
 
@@ -157,7 +181,7 @@ let
     '';
 
     manifestPatch = toJSON {
-      features = genAttrs features (_: [ ]);
+      features = genAttrs features (_: []);
       profile.${ decideProfile compileMode release } = profile;
     };
 
@@ -197,7 +221,8 @@ let
           "CC_${host-triple}"="${ccForHost}" \
           "CXX_${host-triple}"="${cxxForHost}" \
           "''${depKeys[@]}" \
-          ${buildCmd}
+          cargo build ${buildMode} ${commonCargoArgs} \
+            --message-format=json-render-diagnostics >cargo-output.json
       )
     '';
 
@@ -208,7 +233,7 @@ let
       )"
       crateName="$(
         remarshal -if toml -of json Cargo.original.toml \
-        | jq -r 'if .lib."name" then .lib."name" else "${replaceChars ["-"] ["_"] name}" end' \
+        | jq -r 'if .lib."name" then .lib."name" else "${replaceChars [ "-" ] [ "_" ] name}" end' \
       )"
       . ${./utils.sh}
       export CARGO_VERBOSE=`cargoVerbosityLevel $NIX_DEBUG`
@@ -219,7 +244,9 @@ let
 
       export NIX_RUST_LINK_FLAGS="''${linkFlags[@]} $extraRustcFlags"
       export NIX_RUST_BUILD_LINK_FLAGS="''${buildLinkFlags[@]} $extraRustcBuildFlags"
-      export crateName selfLib NIX_RUSTC_LINKER_HACK NIX_RUSTC_LINKER_HACK_ARGS
+      export crateName selfLib RUSTC_CUSTOM_ARGS_CRATES RUSTC_CUSTOM_ARGS
+
+      export doInstallCheck=${builtins.toString doInstallCheck}
 
       depKeys=(`loadDepKeys $dependencies`)
 
@@ -230,8 +257,6 @@ let
           echo $key
         done
       fi
-    '' + optionalString stdenv.isDarwin ''
-      export NIX_x86_64_apple_darwin_CFLAGS_COMPILE+=" -fdebug-prefix-map=$NIX_BUILD_TOP=/build"
     '';
 
     buildPhase = ''
@@ -242,17 +267,53 @@ let
       runHook postBuild
     '';
 
+    preInstallPhases = optional doDoc "docPhase";
+
+    docPhase =
+      let
+        docTargetPath =
+          if stdenv.buildPlatform.config == host-triple
+          then "doc-target"
+          else "doc-target/${host-triple}";
+      in
+        ''
+          runHook preDoc
+          mkdir -p ${docTargetPath}/doc
+          linkRustdocs ${docTargetPath} $dependencies $devDependencies
+          (
+            set -euo pipefail
+            if (( NIX_DEBUG >= 1 )); then
+              set -x
+            fi
+            env \
+              "CC_${stdenv.buildPlatform.config}"="${ccForBuild}" \
+              "CXX_${stdenv.buildPlatform.config}"="${cxxForBuild}" \
+              "CC_${host-triple}"="${ccForHost}" \
+              "CXX_${host-triple}"="${cxxForHost}" \
+              "''${depKeys[@]}" \
+              cargo doc ${commonCargoArgs} --target-dir doc-target
+          )
+          runHook postDoc
+        '';
+
+    dontInstall = compileMode != "build";
+    dontFixup = compileMode != "build";
+
     installPhase = ''
       runHook preInstall
       mkdir -p $out/lib
       cargo_links="$(remarshal -if toml -of json Cargo.original.toml | jq -r '.package.links | select(. != null)')"
-      install_crate ${host-triple}
+      install_crate "$cargo_links"
       runHook postInstall
-    ''
-    # budget strip phase, since the default strip phase does not seem to be able to target specific file types
-    + optionalString stdenv.isDarwin ''
-      find $out/lib -name '*.dylib' -print0 | xargs -0 strip -S 2>/dev/null || true
+    '';
+
+    installCheckPhase = ''
+      mkdir -p $out
+      RUSTC_BOOTSTRAP=1 RUST_BACKTRACE=1 cargo ${compileMode} \
+        ${optionalString (compileMode == "test" && release) "--release"} \
+        -Zdoctest-xcompile \
+        ${let flags = extraTestFlags name; in optionalString (builtins.length flags >= 0) (pkgs.lib.concatStringsSep " " ([ "--" ] ++ flags))}
     '';
   };
 in
-  stdenv.mkDerivation drvAttrs
+stdenv.mkDerivation drvAttrs

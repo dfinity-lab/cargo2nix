@@ -1,9 +1,6 @@
 # cargo2nix
 
-[![Build Status][build-badge]][build-url]
-
-[build-badge]: https://circleci.com/gh/tenx-tech/cargo2nix.svg?style=shield
-[build-url]: https://circleci.com/gh/tenx-tech/cargo2nix
+DFINITY's cargo2nix fork. Original [here](https://github.com/tenx-tech/cargo2nix).
 
 [Nixify](https://nixos.org/nix) your Rust projects today with `cargo2nix`,
 bringing you reproducible builds and better caching.

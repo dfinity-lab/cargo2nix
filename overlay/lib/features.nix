@@ -6,8 +6,12 @@ let
       inherit (lib) splitString;
     in
       features: listToAttrs
-        (map (feature: { name = feature; value = { }; })
-          (concatMap (feature: [ feature (builtins.head (splitString "/" feature)) ])
-            features));
+        (
+          map (feature: { name = feature; value = {}; })
+            (
+              concatMap (feature: [ feature (builtins.head (splitString "/" feature)) ])
+                features
+            )
+        );
 in
-  { inherit expandFeatures; }
+{ inherit expandFeatures; }

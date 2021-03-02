@@ -1,14 +1,14 @@
 # Run all tests for a crate.
 { stdenvNoCC }:
 crate:
-env@{
-  testCommand ? bin: "${bin}",
-  ...
+env@{ testCommand ? bin: "${bin}"
+, ...
 }:
 let
   testBins = crate { compileMode = "test"; };
 in
-  stdenvNoCC.mkDerivation ((removeAttrs env [ "testCommand" ]) // {
+stdenvNoCC.mkDerivation (
+  (removeAttrs env [ "testCommand" ]) // {
     name = "test-${testBins.name}";
     inherit (testBins) src;
     CARGO_MANIFEST_DIR = testBins.src;
@@ -23,4 +23,5 @@ in
       done
       touch $out
     '';
-  })
+  }
+)

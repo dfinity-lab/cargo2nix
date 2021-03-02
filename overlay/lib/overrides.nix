@@ -10,12 +10,13 @@
 # See https://nixos.org/nixpkgs/manual/#sec-pkg-override for more information on `overrideArgs`, and
 # https://nixos.org/nixpkgs/manual/#sec-pkg-overrideAttrs for `overrideAttrs`.
 # type Override = Attrs -> { overrideArgs: Maybe Overrider, overrideAttrs: Maybe Overrider }
-{ }:
+{}:
 let
   combineOverriders = a: b:
     if a == null then b
     else if b == null then a
-    else oldAttrs: let attrs = oldAttrs // a oldAttrs; in attrs // b attrs;
+    else oldAttrs:
+      let attrs = oldAttrs // a oldAttrs; in attrs // b attrs;
 
   nullOverriders = { overrideArgs = null; overrideAttrs = null; };
 in
@@ -27,13 +28,13 @@ in
   makeOverride = args@{ registry ? null, name ? null, version ? null, overrideArgs ? null, overrideAttrs ? null }:
     assert overrideArgs != null || overrideAttrs != null;
     let
-      matcher = builtins.intersectAttrs { registry = { }; name = { }; version = { }; } args;
+      matcher = builtins.intersectAttrs { registry = {}; name = {}; version = {}; } args;
       overriders = { inherit overrideArgs overrideAttrs; };
     in
       args:
         if builtins.intersectAttrs matcher args == matcher
-          then overriders
-          else nullOverriders;
+        then overriders
+        else nullOverriders;
 
   combineOverrides = left: right: args:
     let
